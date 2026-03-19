@@ -4,11 +4,15 @@ from datetime import datetime
 from aiogram import F, types, Router
 from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
+from aiogram.types import InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from handlers.common import show_day_actions, resched_start, resched_date_chosen, resched_final
+
 
 from config import ADMIN_ID, DB_PATH
-from database import update_obsidian_json, get_emoji_number, update_student_balance, get_lessons_by_date
-from states import ScheduleLesson, RegisterStudent
+from database import update_obsidian_json, get_emoji_number, update_student_balance, get_lessons_by_date, \
+    get_student_by_id, get_student_monthly_lessons
+from states import ScheduleLesson, RegisterStudent, RescheduleState
 from utils.calendar_grid import generate_calendar, generate_time_grid
 from utils.scheduler import add_lesson, get_finished_lessons
 
@@ -20,12 +24,49 @@ router.callback_query.filter(F.from_user.id == ADMIN_ID)
 
 
 # --- 1. РАСПИСАНИЕ (КАЛЕНДАРЬ) ---
+@router.callback_query(F.data.startswith("st_name_"))
+async def show_student_lessons(callback: types.CallbackQuery):
+    student_id = int(callback.data.split("_")[2])
 
+    # Получаем имя студента для заголовка
+    student_info = get_student_by_id(student_id)
+    student_name = student_info[0] if student_info else "Ученик"
+
+    lessons = get_student_monthly_lessons(student_id)
+
+    if not lessons:
+        await callback.answer(f"У {student_name} нет уроков в этом месяце", show_alert=True)
+        return
+
+    builder = InlineKeyboardBuilder()
+
+    for lesson_time, lesson_id in lessons:
+        # Превращаем "2026-03-19 13:00" в "19.03 | 13:00"
+        dt = datetime.strptime(lesson_time, '%Y-%m-%d %H:%M')
+        btn_text = dt.strftime('%d.%m | %H:%M')
+
+        # При нажатии на конкретный урок можно открыть меню переноса (из common.py)
+        builder.button(text=btn_text, callback_data=f"resched_start_{lesson_id}")
+
+    builder.adjust(2)  # Кнопки в два ряда
+    builder.row(InlineKeyboardButton(text="⬅️ К списку студентов", callback_data="back_to_students"))
+
+    await callback.message.edit_text(
+        f"📅 Уроки **{student_name}** на этот месяц:",
+        reply_markup=builder.as_markup(),
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+
+# Кнопка возврата
+@router.callback_query(F.data == "back_to_students")
+async def back_to_students_list(callback: types.CallbackQuery):
+    await admin_show_students(callback.message)  # Вызываем вашу существующую функцию
+    await callback.answer()
 @router.message(F.text == "📚 Расписание")
 async def show_admin_calendar(message: types.Message):
-    # Отправляем именно сетку (как на фото)
     await message.answer("Ваш календарь занятий:", reply_markup=generate_calendar())
-
 
 @router.callback_query(F.data.startswith("calendar_move_"))
 async def admin_calendar_nav(callback: types.CallbackQuery):
@@ -35,30 +76,7 @@ async def admin_calendar_nav(callback: types.CallbackQuery):
     )
     await callback.answer()
 
-
 @router.callback_query(F.data.startswith("calendar_day_"), StateFilter(None))
-async def admin_day_details(callback: types.CallbackQuery):
-    _, _, year, month, day = callback.data.split("_")
-    date_str = f"{year}-{int(month):02d}-{int(day):02d}"
-    lessons = get_lessons_by_date(date_str)
-
-    if not lessons:
-        await callback.answer(f"На {day}.{month} уроков нет", show_alert=True)
-    else:
-        # Вместо Alert отправляем сообщение с кнопками управления
-        builder = InlineKeyboardBuilder()
-        text = f"📅 Уроки {day}.{month}:\n"
-
-        for name, time, hw in lessons:
-            time_only = time.split(' ')[1]
-            # Получаем ID урока из БД (нужно добавить его в SELECT в database.py)
-            # Предположим, вы обновили get_lessons_by_date, чтобы она возвращала и ID
-            # builder.button(text=f"🗑 {time_only} {name}", callback_data=f"delete_les_{lesson_id}")
-            text += f"• {time_only} — {name}\n"
-
-        await callback.message.answer(text, reply_markup=builder.as_markup())
-        await callback.answer()
-
 
 # --- 2. СПИСАНИЕ УРОКОВ (ФИНАЛ) ---
 
@@ -163,18 +181,40 @@ async def plan_final_save(callback: types.CallbackQuery, state: FSMContext):
 async def admin_show_students(message: types.Message):
     with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT name, balance, hw_status FROM students")
+        cursor.execute("SELECT name, balance, hw_status, telegram_id FROM students")
         rows = cursor.fetchall()
 
     if not rows:
         await message.answer("Учеников пока нет.")
         return
 
-    res = "📋 Студенты:\n\n👤 Имя | 📚 Бал. | 📝 ДЗ\n" + "-" * 20 + "\n"
-    for n, b, s in rows:
-        icon = "✅" if "Готово" in s else "⏳"
-        res += f"{n} | {get_emoji_number(b)} | {icon}\n"
-    await message.answer(res, parse_mode="Markdown")
+    builder = InlineKeyboardBuilder()
+
+    # --- ШАПКА ТАБЛИЦЫ ---
+    # Добавляем 3 кнопки заголовка
+    builder.add(InlineKeyboardButton(text="👤 Имя", callback_data="ignore"))
+    builder.add(InlineKeyboardButton(text="📚 Баллы", callback_data="ignore"))
+    builder.add(InlineKeyboardButton(text="📝 ДЗ", callback_data="ignore"))
+
+    # --- СТРОКИ СО СТУДЕНТАМИ ---
+    for name, balance, hw_status, tg_id in rows:
+        hw_icon = "✅" if "Готово" in hw_status else "⏳"
+
+        # 1. Кнопка с именем
+        builder.add(InlineKeyboardButton(text=name, callback_data=f"st_name_{tg_id}"))
+        # 2. Кнопка с балансом
+        builder.add(InlineKeyboardButton(text=get_emoji_number(balance), callback_data=f"st_bal_{tg_id}"))
+        # 3. Кнопка со статусом ДЗ
+        builder.add(InlineKeyboardButton(text=hw_icon, callback_data=f"st_hw_{tg_id}"))
+
+    # Группируем по 3 кнопки в ряд (получится ровная таблица)
+    builder.adjust(3)
+
+    await message.answer(
+        "📋 **Ваши студенты:**",
+        reply_markup=builder.as_markup(),
+        parse_mode="Markdown"
+    )
 
 
 @router.callback_query(F.data == "ignore")
@@ -195,3 +235,14 @@ async def check_lessons_loop(bot):
         except Exception as e:
             print(f"Ошибка цикла: {e}")
         await asyncio.sleep(60)
+
+
+# Регистрация общих хендлеров для этого роутера
+router.callback_query.register(
+    show_day_actions,
+    F.data.startswith("calendar_day_") | F.data.startswith("std_day_"),
+    StateFilter(None)
+)
+router.callback_query.register(resched_start, F.data.startswith("resched_start_"))
+router.callback_query.register(resched_date_chosen, RescheduleState.waiting_for_new_date, F.data.startswith("calendar_day_"))
+router.callback_query.register(resched_final, RescheduleState.waiting_for_new_time, F.data.startswith("set_time_"))

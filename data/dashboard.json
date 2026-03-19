@@ -1,22 +1,22 @@
 [
     {
         "name": "Иван",
-        "balance": 0,
+        "balance": 13,
         "hw_status": "⏳ Ждём"
     },
     {
         "name": "Алексей",
-        "balance": 0,
-        "hw_status": "⏳ Ждём"
+        "balance": 2,
+        "hw_status": "✅ Готово"
     },
     {
         "name": "Мария",
-        "balance": 0,
+        "balance": 14,
         "hw_status": "⏳ Ждём"
     },
     {
         "name": "Олег",
-        "balance": 0,
+        "balance": 5,
         "hw_status": "✅ Готово"
     }
 ]

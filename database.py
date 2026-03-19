@@ -44,19 +44,28 @@ def update_hw_status(user_id, status):
         cursor.execute("UPDATE students SET hw_status = ? WHERE telegram_id = ?", (status, user_id))
         conn.commit() # Не забываем коммит!
 
-def get_lessons_by_date(date_str):
-    """Получаем все уроки на конкретную дату для админа"""
+
+def get_lessons_by_date(date_str, student_id=None):
     with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.cursor()
-        # Соединяем с таблицей студентов, чтобы получить имя
-        cursor.execute('''
-            SELECT s.name, l.lesson_time, s.hw_status 
-            FROM lessons l
-            JOIN students s ON l.student_id = s.telegram_id 
-            WHERE l.lesson_time LIKE ?
-        ''', (f"{date_str}%",))
-        return cursor.fetchall()
 
+        # Используем LEFT JOIN, чтобы запрос не падал, если студент не найден
+        query = '''
+                SELECT COALESCE(s.name, 'Неизвестный'), l.lesson_time, COALESCE(s.hw_status, 'Нет'), l.id
+                FROM lessons l
+                         LEFT JOIN students s ON l.student_id = s.telegram_id
+                WHERE l.lesson_time LIKE ? 
+                  AND l.status != 'cancelled'
+                ORDER BY l.lesson_time ASC
+                '''
+        params = [f"{date_str}%"]
+
+        if student_id:
+            query += " AND l.student_id = ?"
+            params.append(student_id)
+
+        cursor.execute(query, params)
+        return cursor.fetchall()
 
 def update_student_balance(user_id):
     # Используем 'with', чтобы соединение закрылось само
@@ -81,6 +90,24 @@ def update_student_balance(user_id):
         else:
             return 0, name
 
+def get_student_monthly_lessons(student_id):
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        # Определяем границы текущего месяца
+        now = datetime.now()
+        month_start = now.replace(day=1, hour=0, minute=0).strftime('%Y-%m-%d %H:%M')
+        # Для простоты берем +31 день от начала месяца
+        month_end = (now.replace(day=1) + timedelta(days=31)).strftime('%Y-%m-%d %H:%M')
+
+        query = """
+            SELECT lesson_time, id 
+            FROM lessons 
+            WHERE student_id = ? AND lesson_time BETWEEN ? AND ? 
+            AND status != 'cancelled'
+            ORDER BY lesson_time ASC
+        """
+        cursor.execute(query, (student_id, month_start, month_end))
+        return cursor.fetchall()
 
 def get_emoji_number(n):
     emoji_map = {'0': '0️⃣', '1': '1️⃣', '2': '2️⃣', '3': '3️⃣', '4': '4️⃣',
@@ -121,3 +148,20 @@ def get_schedule(period, user_id=None):
         query += " ORDER BY l.lesson_time ASC"
         cursor.execute(query, params)
         return cursor.fetchall()
+
+def reschedule_lesson(lesson_id, new_datetime):
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE lessons SET lesson_time = ?, status = 'scheduled' WHERE id = ?",
+            (new_datetime, lesson_id)
+        )
+        conn.commit()
+
+
+def delete_lesson(lesson_id):
+    """Полное удаление урока из базы"""
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM lessons WHERE id = ?", (lesson_id,))
+        conn.commit()

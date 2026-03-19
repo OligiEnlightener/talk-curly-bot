@@ -21,8 +21,8 @@ async def main():
 
     # --- РЕГИСТРАЦИЯ РОУТЕРОВ ---
     # Важно: admin_router лучше ставить выше, если там есть строгие фильтры
-    dp.include_router(admin_router)
     dp.include_router(common_router)  # Для команды /start
+    dp.include_router(admin_router)
     dp.include_router(student_router)
 
     # --- ЗАПУСК ФОНОВЫХ ЗАДАЧ ---
