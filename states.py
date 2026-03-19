@@ -8,3 +8,8 @@ class RegisterStudent(StatesGroup):
 class ScheduleLesson(StatesGroup):
     waiting_for_name = State()
     waiting_for_datetime = State()
+
+class ScheduleLesson(StatesGroup):
+    waiting_for_student = State()
+    waiting_for_date = State()
+    waiting_for_time = State()

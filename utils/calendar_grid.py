@@ -113,3 +113,17 @@ def get_student_week_grid(student_id):
     builder.row(*buttons[4:])
 
     return builder.as_markup()
+
+def generate_time_grid(student_id, date_str):
+    builder = InlineKeyboardBuilder()
+    # Генерируем часы с 08:00 до 22:00
+    for hour in range(8, 23):
+        time_val = f"{hour:02d}:00"
+        # callback содержит ID студента, дату и выбранное время
+        builder.button(
+            text=time_val,
+            callback_data=f"set_time_{student_id}_{date_str}_{time_val}"
+        )
+    builder.adjust(4) # По 4 кнопки в ряд
+    builder.row(InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_planning"))
+    return builder.as_markup()
