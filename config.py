@@ -1,0 +1,4 @@
+API_TOKEN = '8705819597:AAF8I9zNuLmI0y6Z2Cgh7_AJ9gP9c977LQs'
+ADMIN_ID = 364669439
+PATH_TO_OBSIDIAN_JSON = "data/dashboard.json"
+DB_PATH = "data/tutor_bot.db"
